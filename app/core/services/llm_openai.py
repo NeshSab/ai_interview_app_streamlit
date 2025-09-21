@@ -1,12 +1,6 @@
 """
 Purpose: Thin client wrapper around OpenAI (or other LLMs later).
-Why: One place for auth, retries, model options, response/usage normalization.
-
-What is inside:
-- OpenAILLM implementing LLMClient.
-- chat(messages, settings) → returns (reply_text, meta);
-    meta = {"tokens_in":..., "tokens_out":...}.
-- Optional: request/response logging hooks, safe timeouts, backoff.
+One place for auth, retries, model options, response/usage normalization.
 
 Extensibility:
 - Add other providers (AnthropicLLM, LocalLLM) without touching controller.
@@ -16,33 +10,29 @@ Testing: Mock SDK calls; assert it maps usage and errors correctly.
 """
 
 from __future__ import annotations
-
-import os
 import time
 from typing import Optional
-from dotenv import load_dotenv
-
-
-from core.models import LLMSettings  # <— use the shared model
+from ..models import LLMSettings
 
 try:
     from openai import OpenAI
-    from openai import APIError, RateLimitError, APITimeoutError, AuthenticationError
-except Exception:  # pragma: no cover
+    from openai import APIError, RateLimitError, APITimeoutError
+except Exception:
     OpenAI = None
     APIError = RateLimitError = APITimeoutError = AuthenticationError = Exception
 
-load_dotenv()
-
 
 class OpenAILLMClient:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+    def __init__(self, api_key: str):
+        self.api_key = api_key
         if not self.api_key:
             raise RuntimeError("Missing OPENAI_API_KEY")
         if OpenAI is None:
             raise RuntimeError("openai package not installed. pip install openai")
-        self.client = OpenAI(api_key=self.api_key)
+        try:
+            self.client = OpenAI(api_key=self.api_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
 
     def _with_retries(self, fn, *args, **kwargs):
         for delay in [0.5, 1.0, 2.0, 4.0]:
@@ -97,7 +87,6 @@ class OpenAILLMClient:
         except Exception:
             pass
 
-        # Chat Completions (fallback)
         def call_cc():
             return self.client.chat.completions.create(
                 model=settings.model,
@@ -132,7 +121,6 @@ class OpenAILLMClient:
             n=n,
         )
 
-        # url = resp.data[0].url
         url = getattr(resp.data[0], "url", None)
         b64 = getattr(resp.data[0], "b64_json", None)
 
@@ -150,5 +138,4 @@ class OpenAILLMClient:
             png_bytes = base64.b64decode(b64)
             return {"kind": "bytes", "data": png_bytes, "format": "PNG"}, meta
 
-        # Safety
         return {"kind": "none", "data": None}, meta

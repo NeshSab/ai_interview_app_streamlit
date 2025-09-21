@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 from textwrap import dedent
-from typing import Optional, List
+from typing import Optional
 
-from core.models import (
+from ..models import (
     JobDescription,
     PracticeMode,
     HandoffMemo,
@@ -24,13 +24,13 @@ def build_feedback_system(
     mode: PracticeMode,
     interviewer_role: InterviewerRole,
     jd: Optional[JobDescription],
-    memos: Optional[List[HandoffMemo]] = None,
+    memos: Optional[list[HandoffMemo]] = None,
 ) -> str:
     handoff_lines = ""
     if memos:
         bullets = "\n".join(
             f"- {m.interviewer_role.value} ("
-            f"{getattr(m, 'interviewer_persona', '') if not hasattr(m, 'interviewer_persona') else m.interviewer_persona.value}"
+            f"{getattr(m, 'interviewer_persona', '') if not hasattr(m, 'interviewer_persona') else m.interviewer_persona.value}"  # noqa: E501
             f"): {m.summary}"
             for m in memos
             if getattr(m, "summary", "")
@@ -119,14 +119,14 @@ def build_handoff_system(
     mode: PracticeMode,
     interviewer_role: InterviewerRole,
     jd: Optional[JobDescription],
-    memos: Optional[List[HandoffMemo]] = None,
+    memos: Optional[list[HandoffMemo]] = None,
 ) -> str:
     prior = ""
     if memos:
         lines = [
             (
                 f"- {m.interviewer_role.value} ("
-                f"{getattr(m, 'interviewer_persona', '') if not hasattr(m, 'interviewer_persona') else m.interviewer_persona.value}"
+                f"{getattr(m, 'interviewer_persona', '') if not hasattr(m, 'interviewer_persona') else m.interviewer_persona.value}"  # noqa: E501
                 f"): {m.summary}"
             )
             for m in memos

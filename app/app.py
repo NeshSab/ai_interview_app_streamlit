@@ -1,17 +1,8 @@
 """
-app.py (thin UI layer)
+UI layer
 Purpose: Streamlit-only glue. Renders widgets/tabs, collects user inputs, and delegates
-all work to the controller.
-Why: Keeps UI concerns (layout/state widgets) separate from business logic so you
-can unit test logic without Streamlit.
-What is inside:
-- Session state defaults (model, persona, style, etc.).
-- Sidebar controls, JD ingest UI, chat transcript rendering.
-- One call site to the controller: controller.chat_once(...).
-- Token/cost display using services.pricing.
-Do nots: No prompt building, no PDF parsing, no LLM calls, no data mutating beyond
-st_session.
-Testing: Treat as smoke/integration (run app, click through). Put logic elsewhere.
+all work to the controller. Keeps UI concerns (layout/state widgets) separate from
+business logic so logic can be unit tested without Streamlit.
 """
 
 import streamlit as st
@@ -20,7 +11,8 @@ from datetime import datetime
 from typing import Optional
 import hashlib
 
-from core.utils.voice import transcribe_wav_bytes, autoplay_html
+from core.services.llm_openai import OpenAILLMClient
+from core.services.voice import autoplay_html
 from core.controller import InterviewSessionController
 from core.models import (
     LLMSettings,
@@ -29,6 +21,7 @@ from core.models import (
     InterviewerPersona,
     InterviewStyle,
     JobDescription,
+    HandoffMemo,
 )
 from core.services.pricing import PRICE_TABLE, estimate_cost
 from core.controller_roadmap import RoadmapController
@@ -46,14 +39,11 @@ st.set_page_config(
 # ---------------------------
 # UI constants
 # ---------------------------
-
 INTERVIEWER_ROLES = [
     InterviewerRole.HR.value,
     InterviewerRole.HIRING_MANAGER.value,
     InterviewerRole.PM.value,
 ]
-
-
 PRACTICE_MODES = [
     PracticeMode.BEHAVIORAL.value,
     PracticeMode.TECHNICAL.value,
@@ -69,20 +59,14 @@ STYLES = [
     InterviewStyle.DETAILED.value,
 ]
 SENIORITY_CHOICES = ["Junior", "Mid", "Senior", "Team Lead"]
-# map UI label -> normalized token you use elsewhere
 
 # ---------------------------
 # Session state init
 # ---------------------------
 st_session = st.session_state
-if "controller" not in st_session:
-    try:
-        st_session.controller = InterviewSessionController()
-        st.toast("OpenAI client ready!", icon="✅")
-    except Exception as e:
-        st_session.controller = None
-        st.toast(f"OpenAI init failed: {e}")
-
+st_session.setdefault("controller", None)
+st_session.setdefault("roadmap_controller", None)
+st_session.setdefault("api_key_set", False)
 st_session.setdefault("messages", [])
 st_session.setdefault("tokens_in", 0)
 st_session.setdefault("tokens_out", 0)
@@ -90,20 +74,15 @@ st_session.setdefault("model", "gpt-4o-mini")
 st_session.setdefault("style", STYLES[0])
 st_session.setdefault("temperature", 0.7)
 st_session.setdefault("top_p", 0.9)
-
 st_session.setdefault("interviewer_role", INTERVIEWER_ROLES[0])
 st_session.setdefault("interviewer_role_draft", st_session.interviewer_role)
 st_session.setdefault("persona", PERSONAS[1])
 st_session.setdefault("persona_draft", st_session.persona)
 st_session.setdefault("interviewer_set", False)
-
-st_session.setdefault("last_handoff_summary", "")
-
 st_session.setdefault(
     "last_feedback",
     {"scores": None, "summary": "", "improved_answer": "", "next_actions": ""},
 )
-
 st_session.setdefault("job_description", None)
 st_session.setdefault("jd_locked", False)
 st_session.setdefault("practice_mode", PRACTICE_MODES[0])
@@ -111,27 +90,29 @@ st_session.setdefault("proposed_role", "")
 st_session.setdefault("proposed_seniority", "")
 st_session.setdefault("proposed_seniority_draft", "")
 st_session.setdefault("jd_parse_meta", {})
-
 st_session.setdefault("session_start_ts", datetime.now().timestamp())
-
 st_session.setdefault("plan_json", None)
 st_session.setdefault("plan_generated", False)
 st_session.setdefault("infographic", None)
-
 st_session.setdefault("speak_replies", False)
 st_session.setdefault("voice_mode", False)
 st_session.setdefault("last_voice_sig", None)
 st_session.setdefault("tts_queue", [])
-st_session.setdefault("tts_text_queue", [])  # list[str]
-st_session.setdefault("tts_audio_queue", [])  # list[bytes]
+st_session.setdefault("tts_text_queue", [])
+st_session.setdefault("tts_audio_queue", [])
 
 
 # ---------------------------
 # Helpers
 # ---------------------------
 def get_controller():
-    """Return the controller object (or None)."""
+    """Return the controller object."""
     return st_session.get("controller")
+
+
+def get_roadmap_controller():
+    """Return the roadmap controller object."""
+    return st_session.get("roadmap_controller")
 
 
 def get_ready_controller():
@@ -157,22 +138,27 @@ def current_history():
 
 
 def interviewer_role_enum():
+    """Return the committed interviewer role as enum."""
     return InterviewerRole(st_session.interviewer_role)
 
 
 def practice_mode_enum():
+    """Return the committed practice mode as enum."""
     return PracticeMode(st_session.practice_mode)
 
 
 def interviewer_persona_enum():
+    """Return the committed interviewer persona as enum."""
     return InterviewerPersona(st_session.persona)
 
 
 def style_enum():
+    """Return the committed interview style as enum."""
     return InterviewStyle(st_session.style)
 
 
 def make_llm_settings(max_tokens: int = 512) -> LLMSettings:
+    """Build LLMSettings from session state."""
     return LLMSettings(
         model=st_session.model,
         temperature=float(st_session.temperature),
@@ -181,7 +167,7 @@ def make_llm_settings(max_tokens: int = 512) -> LLMSettings:
     )
 
 
-def jd_to_dict(jd) -> dict:
+def jd_to_dict(jd: object) -> dict:
     """Support either dict or dataclass instance."""
     if jd is None:
         return {}
@@ -189,6 +175,7 @@ def jd_to_dict(jd) -> dict:
 
 
 def reset_session():
+    """Wipe all session state except API key and model choice."""
     st_session.messages = []
     st_session.tokens_in = 0
     st_session.tokens_out = 0
@@ -212,7 +199,7 @@ def reset_session():
         controller.reset()
 
 
-def render_handoff_memo(memo) -> None:
+def render_handoff_memo(memo: HandoffMemo) -> None:
     """Pretty UI for a handoff memo object."""
     if not memo:
         return
@@ -244,20 +231,13 @@ def render_handoff_memo(memo) -> None:
 
 
 def on_characteristics_toggle():
-    """
-    - If unlocked → COMMIT & LOCK (no rerun call here; Streamlit will
-    rerun automatically).
-    - If locked   → GENERATE HANDOFF MEMO → UNLOCK → clear chat UI
-    (no rerun call).
-    """
+    """Set or change interviewer role/persona."""
     controller = get_ready_controller()
 
     if not st_session.interviewer_set:
-        # --- COMMIT & LOCK ---
         st_session.interviewer_role = st_session.interviewer_role_draft
         st_session.persona = st_session.persona_draft
 
-        # Persist enums to controller
         if controller and hasattr(controller, "set_interviewer"):
             try:
                 controller.set_interviewer(
@@ -267,16 +247,12 @@ def on_characteristics_toggle():
             except Exception as e:
                 st.toast(f"Could not persist interviewer: {e}")
 
-        # Keep drafts aligned with committed
         st_session.interviewer_role_draft = st_session.interviewer_role
         st_session.persona_draft = st_session.persona
-
         st_session.interviewer_set = True
         st.toast("Interviewer locked.")
-
         return
 
-    # --- currently LOCKED → GENERATE HANDOFF MEMO, then UNLOCK + CLEAR CHAT ---
     try:
         if controller and hasattr(controller, "generate_handoff"):
             history = current_history()
@@ -296,10 +272,8 @@ def on_characteristics_toggle():
     st_session.interviewer_role_draft = st_session.interviewer_role
     st_session.persona_draft = st_session.persona
 
-    # Clear the transcript so the next interviewer starts fresh
     clear_chat_ui()
     st.toast("Interviewer unlocked. You can adjust and press “Set Interviewer”.")
-    # DO NOT call st.rerun() here either.
 
 
 def clear_chat_ui():
@@ -308,19 +282,13 @@ def clear_chat_ui():
     controller = get_ready_controller()
     if controller:
         try:
-            # preferred: a clear method if you add one later
             controller.state.history.clear()
         except Exception:
             pass
 
 
 def start_interview():
-    """
-    When interviewer is set:
-      - If no history → generate greeting+intro request (one assistant turn).
-      - If last turn is user (they introduced themselves) → ask first real question.
-      - If last turn is assistant → do nothing (waiting for user reply).
-    """
+    """If not started yet, greet the user and ask the first question."""
     if not st_session.interviewer_set:
         return
 
@@ -342,7 +310,6 @@ def start_interview():
         return
 
 
-# ── FEEDBACK HELPERS ───────────────────────────────────────────────────────────
 def _extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
     """
     Return (last_question_from_assistant, last_user_answer) from the history.
@@ -350,7 +317,7 @@ def _extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
     """
     last_user = ""
     last_assistant = ""
-    # Walk from end to start; pick the most recent user and assistant turns
+
     for m in reversed(history or []):
         role = m.get("role")
         if not last_user and role == "user":
@@ -371,15 +338,7 @@ def _extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
 
 
 def _render_rubric(scores: dict[str, float] | None):
-    """
-    scores: dict with 0..1 floats. Keys:
-      - answer_quality
-      - star_structure
-      - technical_depth
-      - communication
-    If None, renders placeholders.
-    """
-    # Default placeholders
+    """Render the 4-part rubric with scores and progress bars."""
     if not scores:
         scores = {
             "answer_quality": None,
@@ -407,17 +366,18 @@ def _render_rubric(scores: dict[str, float] | None):
 
 
 def reset_feedback_ui():
-    """Clear rubric + coaching outputs in the Feedback tab."""
+    """Clear rubric and coaching outputs in the Feedback tab."""
     st_session.setdefault("last_feedback", {})
     st_session.last_feedback = {
-        "scores": None,  # dict[str, float] in 0..1, or None
-        "summary": "",  # short textual feedback
-        "improved_answer": "",  # LLM rewrite
-        "next_actions": "",  # bullets
+        "scores": None,
+        "summary": "",
+        "improved_answer": "",
+        "next_actions": "",
     }
 
 
 def _format_duration(seconds: float) -> str:
+    """Format seconds as Hh Mm Ss, skipping hours if zero."""
     seconds = int(max(0, seconds))
     h = seconds // 3600
     m = (seconds % 3600) // 60
@@ -428,6 +388,7 @@ def _format_duration(seconds: float) -> str:
 
 
 def show_infographic(img_payload):
+    """Render an infographic image from URL or bytes payload."""
     kind = img_payload.get("kind")
     data = img_payload.get("data")
 
@@ -435,7 +396,7 @@ def show_infographic(img_payload):
         if not data:
             st.error("Image URL is empty.")
             return
-        st.image(data, use_container_width=True)  # URL string
+        st.image(data, use_container_width=True)
         return
 
     if kind == "bytes":
@@ -443,9 +404,7 @@ def show_infographic(img_payload):
             st.error("Image bytes are empty.")
             return
         fmt = img_payload.get("format", "PNG")
-        st.image(
-            data, use_container_width=True, output_format=fmt
-        )  # <- avoids format sniffing
+        st.image(data, use_container_width=True, output_format=fmt)
         return
 
     st.error("No image received from generator.")
@@ -457,7 +416,32 @@ def show_infographic(img_payload):
 with st.sidebar:
     st.markdown("# Settings")
 
-    # Model
+    st.markdown("## OPEN AI API Key Required")
+    user_api_key = st.sidebar.text_input(
+        "Enter your API key",
+        type="password",
+        help="We do not store your key. It stays in your session only.",
+    )
+    if not user_api_key:
+        st.warning("Please enter your API key in the sidebar to continue.")
+        st.stop()
+    else:
+        if not st_session.api_key_set:
+            try:
+                llm = OpenAILLMClient(api_key=user_api_key)
+                llm.client.models.list()
+            except Exception as e:
+                st.error(f"OpenAI client init failed: {e}")
+                st.stop()
+            try:
+                st_session.controller = InterviewSessionController(llm)
+                st_session.roadmap_controller = RoadmapController(llm)
+                st_session.api_key_set = True
+            except Exception as e:
+                st_session.controller = None
+                st.toast(f"OpenAI init failed: {e}")
+                st.stop()
+
     st_session.model = st.selectbox(
         "Model",
         list(PRICE_TABLE.keys()),
@@ -465,11 +449,8 @@ with st.sidebar:
     )
     st.divider()
 
-    # ----------------- JD ingest: paste or PDF -----------------
     st.markdown("## Job Description")
-
     disabled_jd = st_session.jd_locked
-
     jd_mode = st.radio(
         "Input mode",
         ["Upload PDF", "Paste text"],
@@ -512,8 +493,6 @@ with st.sidebar:
 
             if job:
                 st_session.job_description = job
-
-                # Proposed role/seniority from LLM
                 st_session.proposed_role = (job.get("title") or "").strip()
                 st_session.proposed_seniority = (
                     job.get("meta", {}).get("seniority") or ""
@@ -526,19 +505,14 @@ with st.sidebar:
         except ValueError as e:
             st.error(str(e))
 
-    # After analysis (or manual), ask for confirmation (unlocked)
     if not st_session.jd_locked:
         st.markdown("**Confirm role & seniority**")
-
-        # ROLE is read-only
         st.text_input(
             "Role",
             value=st_session.proposed_role or "—",
             key="proposed_role_view",
             disabled=True,
         )
-
-        # SENIORITY: if parsed -> show read-only; else let the user pick
         if st_session.proposed_seniority:
             st.text_input(
                 "Seniority",
@@ -547,7 +521,6 @@ with st.sidebar:
                 disabled=True,
             )
         else:
-            # let user pick a draft value; do NOT commit until Confirm
             st.selectbox(
                 "Seniority",
                 options=SENIORITY_CHOICES,
@@ -614,7 +587,6 @@ with st.sidebar:
             st.toast("Role & seniority confirmed and locked.", icon="🔒")
             st.rerun()
 
-    # If locked, show a compact preview
     if st_session.jd_locked and st_session.job_description:
         with st.expander("Preview parsed JD"):
             jd_map = jd_to_dict(st_session.job_description)
@@ -626,9 +598,7 @@ with st.sidebar:
             st.text(desc[:1000] + ("..." if len(desc) > 1000 else ""))
     st.divider()
 
-    # --------------------- Interviewer role ---------------------
     st.markdown("## Interviewer Role")
-
     disabled_chars = st_session.interviewer_set
     st.selectbox(
         "Interviewer role",
@@ -647,7 +617,6 @@ with st.sidebar:
     st.divider()
 
     st.markdown("## Interview Controls")
-    # Practice mode
     st_session.practice_mode = st.selectbox(
         "Practice mode",
         PRACTICE_MODES,
@@ -663,7 +632,6 @@ with st.sidebar:
         "Temperature", 0.0, 1.0, st_session.temperature, 0.05
     )
     st_session.top_p = st.slider("Top-p", 0.0, 1.0, st_session.top_p, 0.05)
-    # Reset everything
     st.markdown("## Session Controls")
     st.write("Reset all session data and start fresh.")
     st.button("Reset session", type="primary", on_click=reset_session)
@@ -702,21 +670,31 @@ with about_tab:
     st.subheader("About this app")
     st.markdown(
         """
-        This app is designed to help you prepare for interviews by simulating
-         real interview scenarios.
-        Some rules:
-        - if you do not wish to add job description, then add into a text field: 
-        "Junior Data Scientist" or any other role and seniority.
-        - seniority levels supported: Junior, Mid-level, Senior, Team Lead.
-        - If you have a need for to support other seniority levels, please
-        contact me at ...
-        - longer than 15000 characters job descriptions will be truncated.
-        - Seniority supported: "Junior", "Mid", "Senior", "Team Lead"
-        - 7 day prep plan
+        Welcome to the Interview Prep App!
+        This tool is designed to help you prepare for job interviews by simulating
+        realistic interview scenarios and providing personalized feedback, 
+        as well as the preparation plan.
+
+        What to expect:
+
+        - Practice answering behavioral, technical, and situational interview questions with an AI interviewer. 
+        - Customize your session by selecting the interviewer’s role, persona, and interview style.
+        - Upload a job description (PDF or text) or simply specify your target role and seniority level.
+        - Receive a tailored 7-day preparation plan based on your chosen role and requirements.
+        - Get instant feedback on your answers, including scoring, improvement suggestions, and next steps.
+        - Optionally use voice mode for spoken answers and listen to AI responses.
+        """
+    )
+    st.markdown(
+        """
+        All sessions are private—your data and API key remain secure in your browser session.
+        Supported seniority levels: Junior, Mid, Senior, Team Lead
+        Note: Job descriptions longer than 15,000 characters will be truncated.
+
+        If you need support for other seniority levels or have feedback, please contact the developer.
         """
     )
 
-# --- Practice tab (scrollable transcript + input below) ---
 with practice_tab:
     if not st_session.jd_locked:
         st.info("Please add and confirm a Job Description in the sidebar.")
@@ -729,9 +707,8 @@ with practice_tab:
         )
         st.caption(f"Interview mode: **{practice_mode_enum().value}**")
 
-        start_interview()  # will only greet once, see earlier guard we added
+        start_interview()
 
-        # Voice toggles
         vcol1, vcol2 = st.columns([1, 1])
         with vcol1:
             st_session.voice_mode = st.toggle(
@@ -744,10 +721,8 @@ with practice_tab:
 
         if st_session.tts_audio_queue:
             mp3 = st_session.tts_audio_queue.pop(0)
-            st.html(autoplay_html(mp3))  # optional
-            # st.audio(mp3, format="audio/mp3")
+            st.html(autoplay_html(mp3))
 
-        # 3b) If we have text queued and speaking is enabled, synthesize exactly one
         controller = get_ready_controller()
         if controller and st_session.speak_replies and st_session.tts_text_queue:
             next_text = st_session.tts_text_queue.pop(0)
@@ -758,19 +733,16 @@ with practice_tab:
                     )
                     if audio_bytes:
                         st_session.tts_audio_queue.append(audio_bytes)
-                        # trigger next run to actually play it
                         st.rerun()
                 except Exception as e:
                     st.toast(f"TTS failed: {e}", icon="⚠️")
 
-        # Transcript (only render messages here)
         transcript = st.container(height=500, border=True)
         with transcript:
             for msg in current_history():
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
 
-        # ------------- Unified input handler -------------
         user_text = None
         submitted = False
 
@@ -787,8 +759,12 @@ with practice_tab:
                 sig = hashlib.sha1(wav_bytes).hexdigest()
                 if sig != st_session.get("last_voice_sig"):
                     if controller:
-                        with st.spinner("Transcribing…"):
-                            user_text = transcribe_wav_bytes(wav_bytes)  # your helper
+                        try:
+                            with st.spinner("Transcribing…"):
+                                user_text, _stt = controller.voice_to_text(wav_bytes)
+                        except Exception as e:
+                            st.toast(f"Transcription failed: {e}", icon="⚠️")
+                            user_text = None
                         if user_text:
                             st_session.last_voice_sig = sig
                             submitted = True
@@ -800,7 +776,6 @@ with practice_tab:
 
         if submitted and not user_text:
             st.toast("Please enter a non-empty message.", icon="⚠️")
-        # Only process a turn if we actually have user_text
         if controller and user_text:
             try:
                 controller.append_user(user_text)
@@ -814,8 +789,6 @@ with practice_tab:
                     interviewer_role=interviewer_role_enum(),
                     user_text=user_text,
                 )
-
-                # ---- Speak assistant reply (optional) ----
                 if st_session.speak_replies and reply.strip():
                     st_session.tts_text_queue.append(reply)
 
@@ -824,15 +797,11 @@ with practice_tab:
 
             st.rerun()
 
-
-# --- Feedback tab (placeholder) ---
 with feedback_tab:
     st.subheader("Feedback")
     st.caption(
         "Score your latest answer, preview an improved version, and get next actions."
     )
-
-    # --- Pull last exchange (question + your answer) ---
     history = current_history()
     last_q, last_a = _extract_last_qa(history)
 
@@ -858,7 +827,6 @@ with feedback_tab:
 
     st.divider()
 
-    # --- Actions row ---
     act1, act2, act3 = st.columns([1, 1, 4])
     score_clicked = act1.button(
         "Score last answer", type="primary", disabled=not last_a
@@ -867,16 +835,12 @@ with feedback_tab:
     with act3:
         st.caption("Tip: Answer a question in Practice first, then score it here.")
 
-    # Ensure container exists
     st_session.setdefault(
         "last_feedback",
         {"scores": None, "summary": "", "improved_answer": "", "next_actions": ""},
     )
 
-    # --- Handle clicks FIRST (so results show in the same run) ---
     controller = get_ready_controller()
-
-    # --- Handle clicks FIRST (so results show immediately) ---
     if controller and score_clicked:
         try:
             res, meta = controller.score_last_answer(
@@ -888,7 +852,6 @@ with feedback_tab:
                 persona=interviewer_persona_enum(),
                 style=style_enum(),
             )
-            # write into the single source-of-truth container
             st_session.last_feedback["scores"] = res.get("scores")
             st_session.last_feedback["summary"] = res.get("summary", "")
         except Exception as e:
@@ -896,7 +859,7 @@ with feedback_tab:
 
     if controller and improve_clicked:
         try:
-            res, meta = controller.improve_last_answer(  # <-- correct function
+            res, meta = controller.improve_last_answer(
                 settings=make_llm_settings(380),
                 role=st_session.proposed_role,
                 seniority=st_session.proposed_seniority,
@@ -904,21 +867,17 @@ with feedback_tab:
                 interviewer_role=interviewer_role_enum(),
                 persona=interviewer_persona_enum(),
                 style=style_enum(),
-                rescore=False,  # set True if you also want scores for improved answer
+                rescore=False,
             )
             st_session.last_feedback["improved_answer"] = res.get("improved_answer", "")
             st_session.last_feedback["next_actions"] = res.get("next_actions", "")
-            # Optionally include scores if you called with rescore=True:
             if "scores" in res:
                 st_session.last_feedback["scores"] = res["scores"]
         except Exception as e:
             st.toast(str(e))
 
-    # --- Render with UPDATED state (no second click needed) ---
     st.markdown("#### Rubric")
-    _render_rubric(
-        st_session.last_feedback.get("scores")
-    )  # keep your existing renderer
+    _render_rubric(st_session.last_feedback.get("scores"))
 
     if (st_session.last_feedback.get("summary") or "").strip():
         st.caption(st_session.last_feedback["summary"])
@@ -941,7 +900,6 @@ with feedback_tab:
         key="next_actions_preview",
     )
 
-    # --- Handoff memos below ---
     controller = get_ready_controller()
     st.html(
         """
@@ -978,15 +936,17 @@ with plan_tab:
             plan, meta = controller.generate_prep_plan(
                 role=st_session.proposed_role,
                 seniority=st_session.proposed_seniority,
-                requirements=requirements,  # can be list[str] or a long string
+                requirements=requirements,
                 model=st_session.model,
             )
             st_session.plan_json = plan
             st_session.plan_generated = True
 
-        roadmap_ctrl = RoadmapController()
-        if roadmap_ctrl:
-            img_payload, meta = roadmap_ctrl.generate_infographic(st_session.plan_json)
+        roadmap_controller = get_roadmap_controller()
+        if roadmap_controller:
+            img_payload, meta = roadmap_controller.generate_infographic(
+                st_session.plan_json
+            )
             st_session.infographic = img_payload
             st.rerun()
 
@@ -1025,21 +985,17 @@ with pricing_tab:
     controller = get_ready_controller()
     history = current_history()
 
-    # Session time
     now_ts = datetime.now().timestamp()
     session_secs = now_ts - float(st_session.get("session_start_ts", now_ts))
 
-    # Turn counts
     user_turns = sum(1 for m in (history or []) if m.get("role") == "user")
     interviewer_turns = sum(1 for m in (history or []) if m.get("role") == "assistant")
 
-    # Tokens & cost (prefer controller’s totals)
     tokens_in = getattr(controller, "tokens_in", 0) if controller else 0
     tokens_out = getattr(controller, "tokens_out", 0) if controller else 0
     model_used = getattr(controller, "model_used", None) or st_session.model
     est_cost = estimate_cost(model_used, tokens_in, tokens_out)
 
-    # Top row: time & turns
     c1, c2, _ = st.columns([1, 1, 1])
     with c1:
         st.metric("Tokens (in)", f"{tokens_in:,}")

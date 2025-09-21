@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 from textwrap import dedent
-from typing import Optional, List
+from typing import Optional
 
-from core.models import (
+from ..models import (
     JobDescription,
     PracticeMode,
     HandoffMemo,
@@ -22,6 +22,7 @@ from .common import (
     self_critique_block,
     jd_hint_block,
 )
+
 ACTIVE_PROMPT_PROFILE: PromptProfile = PromptProfile.FEW_SHOT
 
 
@@ -34,7 +35,7 @@ def build_interview_system(
     mode: PracticeMode,
     interviewer_role: InterviewerRole,
     jd: Optional[JobDescription],
-    memos: Optional[List[HandoffMemo]] = None,
+    memos: Optional[list[HandoffMemo]] = None,
 ) -> str:
     core = dedent(
         f"""\

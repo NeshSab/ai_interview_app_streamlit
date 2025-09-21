@@ -1,22 +1,13 @@
 """
 Purpose: Guardrails for inputs and content.
-Why: Early, predictable failures; prevent oversized requests, PII,
+Content: early, predictable failures; prevent oversized requests, PII,
 or prompt-injection from JDs.
-
-What is inside:
-- Limits (MAX_INPUT_CHARS, MAX_JD_CHARS).
-- validate_user_input(text); validate_job_description(jd)
-- (Later) heuristics to strip URLs/secrets; JD sanitizers.
-
-Testing: Straightforward boundary tests.
 """
 
-from core.utils.llm_json import extract_json
-from core.models import LLMSettings
-from core.interfaces import LLMClient
-from core.prompts.factory import DefaultPromptFactory
-from core.services.llm_openai import OpenAILLMClient
-from typing import Optional
+from ..utils.llm_json import extract_json
+from ..models import LLMSettings
+from ..prompts.factory import DefaultPromptFactory
+from ..interfaces import LLMClient
 import re
 
 EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
@@ -108,8 +99,8 @@ class DefaultSecurity:
         self,
         role_text: str,
         seniority_text: str,
+        llm: LLMClient,
         *,
-        llm: Optional[OpenAILLMClient] = None,
         model: str = "gpt-4o-mini",
     ) -> tuple[bool, str, bool, str, str, dict]:
         """
@@ -119,7 +110,6 @@ class DefaultSecurity:
         """
 
         if not (role_text or "").strip():
-            # no LLM call => empty meta
             return (
                 False,
                 "",
@@ -129,7 +119,7 @@ class DefaultSecurity:
                 {"tokens_in": 0, "tokens_out": 0},
             )
 
-        client = llm or OpenAILLMClient()
+        client = llm
         prompts = DefaultPromptFactory()
         system = prompts.build_role_validation_system()
         user = prompts.validate_role_seniority_instruction(
@@ -142,7 +132,7 @@ class DefaultSecurity:
                 {"role": "user", "content": user},
             ],
             settings=LLMSettings(
-                model=model, temperature=0.0, top_p=1.0, max_tokens=220
+                model=model, temperature=0.3, top_p=0.9, max_tokens=220
             ),
         )
         obj = extract_json(text)

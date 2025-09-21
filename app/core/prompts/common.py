@@ -4,15 +4,13 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import Optional, List
 
-from core.models import (
+from ..models import (
     PracticeMode,
     HandoffMemo,
     InterviewerRole,
     JobDescription,
     Message,
 )
-
-# ---------- Mode & Role rules ----------
 
 
 def mode_rules(mode: PracticeMode) -> str:
@@ -56,32 +54,30 @@ def role_rules(role: InterviewerRole) -> str:
     )
 
 
-# ---------- Few-shot exemplars by level/mode ----------
-
 _FEWSHOT_BY_LEVEL = {
     PracticeMode.BEHAVIORAL: {
         "junior": [
-            "Tell me about a time you asked for help effectively to unblock work. What did you try first?",
+            "Tell me about a time you asked for help effectively to unblock work. What did you try first?",  # noqa: E501
         ],
         "mid": [
-            "Describe owning a deliverable end-to-end with measurable outcomes. How did you handle trade-offs?",
+            "Describe owning a deliverable end-to-end with measurable outcomes. How did you handle trade-offs?",  # noqa: E501
         ],
         "senior": [
-            "Tell me about influencing a cross-team decision without authority. How did you win alignment?",
+            "Tell me about influencing a cross-team decision without authority. How did you win alignment?",  # noqa: E501
         ],
         "team_lead": [
-            "Describe guiding a team through ambiguity. How did you de-risk and communicate across functions?",
+            "Describe guiding a team through ambiguity. How did you de-risk and communicate across functions?",  # noqa: E501
         ],
     },
     PracticeMode.TECHNICAL: {
         "junior": [
-            "Walk me through your approach before coding. How do you validate understanding and constraints?",
+            "Walk me through your approach before coding. How do you validate understanding and constraints?",  # noqa: E501
         ],
         "mid": [
-            "What trade-offs and complexities would you call out in your design? How do you test the riskiest part?",
+            "What trade-offs and complexities would you call out in your design? How do you test the riskiest part?",  # noqa: E501
         ],
         "senior": [
-            "How would you add observability (metrics/logs/alerts) and SLAs to your design?",
+            "How would you add observability (metrics/logs/alerts) and SLAs to your design?",  # noqa: E501
         ],
         "team_lead": [
             "How would you stage rollout, de-risk, and align stakeholders across teams?",
@@ -89,16 +85,16 @@ _FEWSHOT_BY_LEVEL = {
     },
     PracticeMode.SITUATIONAL: {
         "junior": [
-            "When blocked by conflicting asks, how would you escalate and seek guidance appropriately?",
+            "When blocked by conflicting asks, how would you escalate and seek guidance appropriately?",  # noqa: E501
         ],
         "mid": [
-            "How would you re-scope and communicate a plan when constraints tighten suddenly?",
+            "How would you re-scope and communicate a plan when constraints tighten suddenly?",  # noqa: E501
         ],
         "senior": [
-            "How do you align stakeholders under pressure and manage risk to business impact?",
+            "How do you align stakeholders under pressure and manage risk to business impact?",  # noqa: E501
         ],
         "team_lead": [
-            "How would you renegotiate success criteria and communicate trade-offs to execs?",
+            "How would you renegotiate success criteria and communicate trade-offs to execs?",  # noqa: E501
         ],
     },
 }
@@ -157,9 +153,6 @@ def self_critique_block() -> str:
     )
 
 
-# ---------- Memos & JD helpers ----------
-
-
 def render_memos(memos: Optional[List[HandoffMemo]]) -> str:
     if not memos:
         return ""
@@ -180,9 +173,6 @@ def jd_hint_block(jd: Optional[JobDescription], *, max_chars: int = 1200) -> str
     if jd and (jd.description or "").strip():
         return f"\nJob Description:\n{(jd.description or '')[:max_chars]}"
     return "Job Description: not provided."
-
-
-# ---------- Messages assembly ----------
 
 
 def assemble(*, system: str, history: list[Message], user_text: str) -> list[Message]:

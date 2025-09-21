@@ -1,6 +1,5 @@
 """
-Canonical data shapes. Shared truth for typing/validation between layers
-allowing easier refactors.
+Purpose: Canonical data shapes, shared truth for typing/validation between layers.
 
 Typical contents:
 - LLMSettings (model, temperature, top_p, max_tokens).
@@ -71,13 +70,12 @@ class JDParseResult:
 
 @dataclass
 class Message:
-    role: str  # "user" | "assistant" | "system"
+    role: str  
     content: str
 
 
 @dataclass
 class HandoffMemo:
-    # Per-interviewer memo (no 'mode' here)
     interviewer_role: InterviewerRole
     interviewer_persona: InterviewerPersona
     summary: str

@@ -1,0 +1,7 @@
+# Black formatter is used for the autoformatting.
+# It allows lines up to 88 characters, which
+# in turn comes back as an error in Flake8.
+# This file makes Flake8 to ignore this.
+[flake8]
+max-line-length = 88
+extend-ignore = E203,E701

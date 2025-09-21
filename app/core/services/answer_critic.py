@@ -1,55 +1,38 @@
 """
 Purpose: Score/critique a user answer and propose improvements.
-Why: Powers the “Feedback” tab and learning loop.
+Powers the “Feedback” tab and learning loop.
 
 What is inside (later):
-score_answer(answer, rubric, role, seniority, jd) -> Dict
+score answer(answer, rubric, role, seniority, jd) -> Dict
 (e.g., {star: 3/5, depth: 4/5, ...})
-improve_answer(answer, critique) -> str
-
-Optional: chain-of-thought kept internal; expose only structured tips.
+improve answer(answer, critique) -> str
 
 Testing: Snapshot tests on known answers; bounds (empty/long answers).
 """
 
-# core/services/answer_critic.py
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from core.models import (
+from ..models import (
     HandoffMemo,
     InterviewerRole,
-    InterviewerPersona,  # <- rename to InterviewerPersona if that's your enum name
+    InterviewerPersona,
     JobDescription,
     Message,
     LLMSettings,
     PracticeMode,
     InterviewStyle,
 )
-from core.interfaces import LLMClient, PromptFactory
-from core.utils.llm_json import extract_json, require_object
+from ..interfaces import LLMClient, PromptFactory
+from ..utils.llm_json import extract_json, require_object
 
 
 def _clip_text(s: str, max_chars: int) -> str:
+    """Clip text to max_chars, adding ellipsis if clipped."""
     if len(s) <= max_chars:
         return s
     return s[: max_chars - 1].rstrip() + "…"
-
-
-def _summarize_jd(jd: Optional[JobDescription], max_chars: int = 800) -> str:
-    if not jd:
-        return ""
-    parts = []
-    if jd.title:
-        parts.append(f"Title: {jd.title}")
-    if jd.company:
-        parts.append(f"Company: {jd.company}")
-    if jd.location:
-        parts.append(f"Location: {jd.location}")
-    if jd.description:
-        parts.append("Description:\n" + _clip_text(jd.description, max_chars))
-    return "\n".join(parts)
 
 
 def _render_recent(history: list[Message], max_chars: int = 4000) -> str:
@@ -67,12 +50,14 @@ def _render_recent(history: list[Message], max_chars: int = 4000) -> str:
             lines.append(f"Candidate: {content}")
         elif role == "assistant":
             lines.append(f"Interviewer: {content}")
-        # ignore any 'system' just in case
     text = "\n\n".join(lines)
     return _clip_text(text, max_chars)
 
 
 def _to_str_list(x: Any) -> list[str]:
+    """Convert None, str, or list[str] to list[str].
+    Discard empty/whitespace-only strings.
+    """
     if x is None:
         return []
     if isinstance(x, list):
@@ -83,7 +68,6 @@ def _to_str_list(x: Any) -> list[str]:
                 if item:
                     out.append(item)
         return out
-    # allow single string
     if isinstance(x, str):
         s = x.strip()
         return [s] if s else []
@@ -123,8 +107,8 @@ def generate_handoff_llm(
     interviewer_role: InterviewerRole,
     interviewer_persona: InterviewerPersona,
     jd: JobDescription | None,
-    history_slice: list[Message],  # slice since last memo
-    persona: InterviewerPersona,  # keep API consistent with other funcs
+    history_slice: list[Message],
+    persona: InterviewerPersona,
     style: InterviewStyle,
     role: str,
     seniority: str,
@@ -151,7 +135,7 @@ def generate_handoff_llm(
         mode=mode,
         interviewer_role=interviewer_role,
         jd=jd,
-        memos=None,  # you can pass prior memos if desired
+        memos=None,
     )
     user_prompt = prompts.handoff_instruction(
         transcript=transcript_block,
@@ -201,6 +185,7 @@ def score_last_answer_llm(
     job: Optional[JobDescription],
     memos: list,
 ) -> tuple[dict, dict]:
+    """Return (score_dict, meta) for the last Q/A in history."""
     q, a = extract_last_qa(history)
     if not a:
         raise ValueError("No candidate answer found to score.")
@@ -265,6 +250,7 @@ def improve_last_answer_llm(
     memos: list,
     rescore: bool = False,
 ) -> tuple[dict, dict]:
+    """Return (improvement_dict, meta) for the last Q/A in history."""
     q, a = extract_last_qa(history)
     if not a:
         raise ValueError("No candidate answer found to improve.")
@@ -327,7 +313,6 @@ def improve_last_answer_llm(
                 except Exception:
                     scores2[k] = 0.0
             result["scores"] = scores2
-        # accumulate tokens from rescore into meta for the caller
         if isinstance(meta, dict) and isinstance(meta2, dict):
             meta["tokens_in"] = int(meta.get("tokens_in", 0)) + int(
                 meta2.get("tokens_in", 0)

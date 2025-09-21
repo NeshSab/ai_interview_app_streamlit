@@ -1,7 +1,6 @@
 """
-Purpose: The single orchestration point for a session. Owns conversation history,
-the active JD, and coordinates services.
-Why: Centralizes “one-turn” logic and session lifecycle (start, chat_once, reset).
+Purpose: The single orchestration point for a session. Owns state, history, job.
+It centralizes “one-turn” logic and session lifecycle (start, chat_once, reset).
 Prevents UI from knowing how prompts/LLM/services work.
 
 Key responsibilities:
@@ -33,7 +32,6 @@ from .models import (
 )
 from .services import jd_analyzer
 from .interfaces import LLMClient, PromptFactory, SecurityGuard
-from .services.llm_openai import OpenAILLMClient
 from .prompts.factory import DefaultPromptFactory
 from .services.security import DefaultSecurity
 from .services.answer_critic import (
@@ -43,93 +41,61 @@ from .services.answer_critic import (
 )
 from .services.pricing import estimate_tokens_from_text
 from .services.speech import tts_bytes
+from .services.voice import transcribe_wav_bytes
 
 
 class InterviewSessionController:
-    """
-    Orchestrates one interview session.
-
-    - Single global history in SessionState.history
-    - PracticeMode is a prompt parameter only (like temp/top-p)
-    - Handoff memos are generated ONLY on UI action “Change Interviewer”
-      and are tagged by interviewer role/persona (not mode)
-    """
-
     def __init__(
         self,
-        llm: Optional[LLMClient] = None,
-        prompts: Optional[PromptFactory] = None,
-        security: Optional[SecurityGuard] = None,
+        llm: LLMClient,
     ):
-        self.llm: LLMClient = llm or OpenAILLMClient()
-        self.prompts: PromptFactory = prompts or DefaultPromptFactory()
-        self.security: SecurityGuard = security or DefaultSecurity()
-
+        self.llm: LLMClient = llm
+        self.prompts: PromptFactory = DefaultPromptFactory()
+        self.security: SecurityGuard = DefaultSecurity()
         self.state = SessionState()
 
-        # usage accounting
         self.tokens_in: int = 0
         self.tokens_out: int = 0
         self.model_used: Optional[str] = None
 
-    # -------- status --------
     def is_ready(self) -> bool:
+        """True if the controller is ready to chat (has an LLM)."""
         return self.llm is not None
 
-    # -------- interviewer (optional persistence) --------
     def set_interviewer(
         self, role: InterviewerRole, persona: InterviewerPersona
     ) -> None:
+        """Set the committed interviewer role/persona for the session."""
         self.state.interviewer_role = role
         self.state.interviewer_persona = persona
 
-    # -------- history / job --------
     def set_history(self, messages: list[Message]) -> None:
+        """Overwrite the full history with a new list of messages."""
         self.state.history = messages[:]
 
     def get_history(self) -> list[Message]:
+        """Get the current full history of messages."""
         return self.state.history
 
     def append_assistant(self, text: str) -> None:
+        """Append an assistant message to history."""
         self.state.history.append({"role": "assistant", "content": text})
 
     def append_user(self, text: str) -> None:
+        """Append a user message to history."""
         self.state.history.append({"role": "user", "content": text})
 
-    def set_job_description_old(
-        self, jd_obj: JobDescription | Mapping[str, Any] | None
-    ) -> None:
-        if jd_obj is None:
-            self.state.job = None
-            return
-        if isinstance(jd_obj, JobDescription):
-            self.state.job = jd_obj
-            return
-        if isinstance(jd_obj, Mapping):
-            self.state.job = JobDescription(**jd_obj)
-            return
-        raise TypeError(f"Unsupported JD type: {type(jd_obj)!r}")
-
     def set_job_description(self, jd_obj) -> None:
-        """
-        Accepts:
-        - a JobDescription dataclass instance
-        - a dict-like object with JobDescription fields
-        - any object with attributes matching JobDescription fields
-        Normalizes to a JobDescription and stores in self.state.job.
-        """
-        from core.models import JobDescription
+        """Set or clear the current JobDescription for the session."""
 
         if jd_obj is None:
             self.state.job = None
             return
 
-        # 1) If it's already the dataclass, store as-is
         if isinstance(jd_obj, JobDescription):
             self.state.job = jd_obj
             return
 
-        # 2) If it's a mapping, coerce to dict
         if isinstance(jd_obj, dict):
             data = dict(jd_obj)
         else:
@@ -137,45 +103,37 @@ class InterviewSessionController:
             if not isinstance(data, dict):
                 raise TypeError(f"Unsupported JD type: {type(jd_obj)!r}")
 
-        # Ensure meta exists
         data.setdefault("meta", data.get("meta") or {})
-
-        # 4) Build a canonical JobDescription
         self.state.job = JobDescription(**data)
 
-    # -------- lifecycle --------
     def reset(self, *, preserve_job: bool = True) -> None:
+        """Clear history, handoffs, cursors, and token counters. Optionally keep job."""
         job = self.state.job if preserve_job else None
         self.state = SessionState()
         self.state.job = job
         self.tokens_in = self.tokens_out = 0
         self.model_used = None
 
-    # -------- handoff (UI decides when) --------
     def generate_handoff(
         self,
         *,
         settings: Optional[LLMSettings] = None,
         persona: "InterviewerPersona" = None,
         style: "InterviewStyle" = None,
-        mode: PracticeMode = PracticeMode.BEHAVIORAL,  # current mode if you track it
+        mode: PracticeMode = PracticeMode.BEHAVIORAL,
     ) -> HandoffMemo:
         """
         Slice recent history since last memo, ask LLM for a handoff memo,
         append it to state, and advance the cursor. Returns the memo.
         """
-        # Defaults from current committed interviewer + style/persona if not provided
         persona = persona or self.state.interviewer_persona
-        style = style or InterviewStyle.CONCISE  # or keep in state/UI
+        style = style or InterviewStyle.CONCISE
         use_settings = settings or LLMSettings(
             model="gpt-4o-mini", temperature=0.2, top_p=1.0, max_tokens=500
         )
-
-        # Slice recent turns
         start = int(self.state.last_memo_cursor or 0)
         recent = self.state.history[start:] if self.state.history else []
 
-        # Generate
         memo, meta = generate_handoff_llm(
             llm=self.llm,
             prompts=self.prompts,
@@ -195,12 +153,10 @@ class InterviewSessionController:
             mode=mode,
         )
 
-        # Token accounting
         self.tokens_in += int(meta.get("tokens_in", 0))
         self.tokens_out += int(meta.get("tokens_out", 0))
         self.model_used = use_settings.model
 
-        # Store and advance cursor
         self.state.handoffs.append(memo)
         self.state.last_memo_cursor = len(self.state.history)
 
@@ -218,9 +174,8 @@ class InterviewSessionController:
         interviewer_role: InterviewerRole,
         user_text: Optional[str] = None,
     ) -> tuple[str, dict]:
-        # prefer explicit user input
         """
-        Purpose: handle a normal back-and-forth chat turn (user input + AI reply).
+        Handles a normal back-and-forth chat turn (user input + AI reply).
         Pattern:
         Takes the latest user input (either explicitly passed as user_text or
         pulled from history).
@@ -340,7 +295,6 @@ class InterviewSessionController:
             job=self.state.job,
             memos=self.state.handoffs,
         )
-        # token accounting
         self.tokens_in += int(meta.get("tokens_in", 0))
         self.tokens_out += int(meta.get("tokens_out", 0))
         self.model_used = settings.model
@@ -390,7 +344,7 @@ class InterviewSessionController:
         Convenience: returns (jd_dict, meta) suitable for JobDescription(**jd_dict)
         with controller-managed token accounting.
         """
-        jd_dict, meta = jd_analyzer.process_text_input(text, model=model)
+        jd_dict, meta = jd_analyzer.process_text_input(text, self.llm, model=model)
         self.tokens_in += int(meta.get("tokens_in", 0))
         self.tokens_out += int(meta.get("tokens_out", 0))
         self.model_used = model
@@ -401,7 +355,7 @@ class InterviewSessionController:
         Convenience: returns (jd_dict, meta) suitable for JobDescription(**jd_dict)
         with controller-managed token accounting.
         """
-        jd_dict, meta = jd_analyzer.process_pdf(file_like, model=model)
+        jd_dict, meta = jd_analyzer.process_pdf(file_like, self.llm, model=model)
         self.tokens_in += int(meta.get("tokens_in", 0))
         self.tokens_out += int(meta.get("tokens_out", 0))
         self.model_used = model
@@ -432,18 +386,34 @@ class InterviewSessionController:
         return plan, meta
 
     def speak(self, text: str, *, voice="alloy", tts_model="gpt-4o-mini-tts"):
+        """Returns audio bytes and meta with char/token counts from text."""
         safe = (text or "").strip()
         if not safe:
             return b"", {"tts_chars": 0, "tts_tokens_est": 0, "model": tts_model}
-        audio = tts_bytes(safe, voice=voice, model=tts_model)
+        audio = tts_bytes(safe, self.llm, voice=voice, model=tts_model)
         est = estimate_tokens_from_text(safe)
 
         self.tokens_in += est
-        self.tokens_out += 0  # TTS has no output tokens
+        self.tokens_out += 0
         self.model_used = tts_model
 
         return audio, {
             "tts_chars": len(safe),
             "tts_tokens_est": est,
             "model": tts_model,
+        }
+
+    def voice_to_text(self, wav_bytes: bytes, *, model="whisper-1") -> str:
+        """Returns (text, meta) from audio bytes."""
+        text = transcribe_wav_bytes(wav_bytes, self.llm, model=model)
+        est = estimate_tokens_from_text(text)
+
+        self.tokens_in += 0
+        self.tokens_out += est
+        self.model_used = model
+
+        return text, {
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "model": self.model_used,
         }

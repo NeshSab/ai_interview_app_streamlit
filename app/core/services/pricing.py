@@ -1,16 +1,9 @@
 """
 Purpose: Token math & cost estimation.
-Why: Central pricing logic so UI/controller do not duplicate calculations.
-
-What is inside:
-- PRICE_TABLE = { model: Price(input_per_1M, output_per_1M) }
-Pricing: https://platform.openai.com/docs/pricing?latest-pricing=standard.
-- estimate_cost(model, tokens_in, tokens_out) -> float
-
-Testing: Unit tests for edge cases (zero tokens, unknown model).
+Central pricing logic so UI/controller do not duplicate calculations.
 """
 
-from core.models import Price
+from ..models import Price
 
 
 PRICE_TABLE = {

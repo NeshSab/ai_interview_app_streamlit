@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import Optional, List
-from core.models import (
+from ..models import (
     JobDescription,
     Message,
     PracticeMode,
@@ -14,11 +14,11 @@ from core.models import (
 from . import interview as _interview
 from . import feedback as _feedback
 from . import job_description as _jd
+from . import roadmap as _roadmap
 from .common import assemble as _assemble
 
 
 class DefaultPromptFactory:
-    # INTERVIEW
     def build_system(
         self,
         *,
@@ -45,7 +45,6 @@ class DefaultPromptFactory:
     def greeting_instruction(self) -> str:
         return _interview.greeting_instruction()
 
-    # FEEDBACK / COACHING
     def build_feedback_system(
         self,
         *,
@@ -140,6 +139,9 @@ class DefaultPromptFactory:
         return _jd.jd_plan_with_requirements_instruction(
             role=role, seniority=seniority, requirements=requirements
         )
+
+    def build_infographic_prompt(self, plan: dict) -> str:
+        return _roadmap.build_infographic_prompt(plan)
 
     def assemble(
         self, *, system: str, history: list[Message], user_text: str

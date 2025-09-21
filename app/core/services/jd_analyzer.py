@@ -1,3 +1,9 @@
+"""
+Purpose: LLM-driven job description analysis & plan generation.
+Content: parse_job_text(text, llm) → (JDParseResult, meta);
+generate_prep_plan(role, seniority, requirements, llm) → (plan_dict, meta).
+"""
+
 from __future__ import annotations
 from typing import Optional, Any
 
@@ -6,12 +12,11 @@ try:
 except Exception:
     PdfReader = None
 
-from core.interfaces import LLMClient
-from core.services.llm_openai import OpenAILLMClient
-from core.models import LLMSettings, JDParseResult, ParseOutcome
-from core.prompts.factory import DefaultPromptFactory
-from core.services.security import DefaultSecurity
-from core.utils.llm_json import extract_json, require_object
+from ..interfaces import LLMClient
+from ..models import LLMSettings, JDParseResult, ParseOutcome
+from ..prompts.factory import DefaultPromptFactory
+from ..services.security import DefaultSecurity
+from ..utils.llm_json import extract_json, require_object
 
 _MAX_REQ = 12
 _MAX_REQ_CHARS = 1200
@@ -43,8 +48,8 @@ def _sum_meta(*metas: dict | None) -> dict[str, int]:
 
 def parse_job_text(
     text: str,
+    llm: LLMClient,
     *,
-    llm: Optional[LLMClient] = None,
     model: str = "gpt-4o-mini",
 ) -> tuple[JDParseResult, dict[str, int]]:
     """
@@ -52,7 +57,7 @@ def parse_job_text(
     requirements).
     Returns: (JDParseResult, meta)
     """
-    client = llm or OpenAILLMClient()
+    client = llm
     prompts = DefaultPromptFactory()
     security = DefaultSecurity()
 
@@ -75,7 +80,7 @@ def parse_job_text(
 
     # Validate + normalize role/seniority
     ok_role, norm_role, ok_sen, norm_sen, notes_val, meta_val = (
-        security.validate_role_and_seniority(role_raw, seniority_raw, model=model)
+        security.validate_role_and_seniority(role_raw, seniority_raw, llm, model=model)
     )
 
     company = (obj.get("company") or "").strip() or None
@@ -174,14 +179,14 @@ def generate_prep_plan(
     role: str,
     seniority: str,
     requirements: Any,  # str or list[str]
-    llm: Optional[LLMClient] = None,
+    llm: Optional[LLMClient],
     model: str = "gpt-4o-mini",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Produce a 7-day plan JSON using role, seniority, and (optional) requirements.
     Returns (plan_dict, meta). The controller should consume `meta` for token accounting.
     """
-    client = llm or OpenAILLMClient()
+    client = llm
     prompts = DefaultPromptFactory()
     sec = DefaultSecurity()
 
@@ -219,7 +224,7 @@ def generate_prep_plan(
 
 
 def process_text_input(
-    text: str, *, model: str = "gpt-4o-mini"
+    text: str, llm: LLMClient, model: str = "gpt-4o-mini"
 ) -> tuple[dict, dict[str, int]]:
     """
     Return a dict compatible with core.models.JobDescription(**dict) + meta.
@@ -230,7 +235,7 @@ def process_text_input(
     text, _ = security.redact_pii(text)
     text = security.validate_job_description_length(text)
 
-    parsed, meta = parse_job_text(text, model=model)
+    parsed, meta = parse_job_text(text, llm=llm, model=model)
     if parsed.outcome == ParseOutcome.NEITHER:
         raise ValueError(
             "This text doesn't look like a job description or a role/seniority line."
@@ -261,8 +266,8 @@ def process_text_input(
     return jd_dict, meta
 
 
-def process_pdf(file_like, *, model: str = "gpt-4o-mini") -> Optional[dict]:
+def process_pdf(file_like, llm, *, model: str = "gpt-4o-mini") -> Optional[dict]:
     pdf_text = extract_pdf_text(file_like)
     if not pdf_text:
         return None
-    return process_text_input(pdf_text, model=model)
+    return process_text_input(pdf_text, llm, model=model)
