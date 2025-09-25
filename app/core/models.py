@@ -1,11 +1,10 @@
 """
-Purpose: Canonical data shapes, shared truth for typing/validation between layers.
+Canonical data shapes, shared truth for typing/validation between layers.
 
 Typical contents:
 - LLMSettings (model, temperature, top_p, max_tokens).
 - JobDescription (title, company, location, description, meta).
 - Message (role, content).
-- FeedbackRubric, Critique, PlanItem, etc.
 
 Testing: Trivial; mostly types. Add validation helpers if needed.
 """
@@ -70,7 +69,7 @@ class JDParseResult:
 
 @dataclass
 class Message:
-    role: str  
+    role: str
     content: str
 
 
@@ -102,7 +101,7 @@ class SessionState:
 
 @dataclass
 class JobDescription:
-    title: Optional[str]
+    title: str
     company: Optional[str]
     location: Optional[str]
     description: str

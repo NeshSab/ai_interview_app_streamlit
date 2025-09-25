@@ -53,7 +53,6 @@ class OpenAILLMClient:
             payload.append({"role": "system", "content": system})
         payload.extend(messages)
 
-        # Responses API (try)
         try:
             if hasattr(self.client, "responses"):
 
@@ -110,7 +109,7 @@ class OpenAILLMClient:
             "raw": cc,
         }
 
-    def image_generate(self, *, prompt: str, size: str = "1024x1024", n: int = 1):
+    def image_generate(self, *, prompt: str, size: str = "auto", n: int = 1):
         """
         Generate images from text prompt using OpenAI's image generation API.
         Tokens in and out are just a rought estimates."""
@@ -126,7 +125,7 @@ class OpenAILLMClient:
 
         meta = {
             "tokens_in": len(prompt.split()),
-            "tokens_out": 4000,
+            "tokens_out": 6240 * n,
             "model": "gpt-image-1",
         }
         if url:

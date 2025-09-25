@@ -1,8 +1,8 @@
 """
-Protocols: define what services or components can do,
-without saying how they do it.
-Purpose: Abstractions for pluggable services. Inversion of control—core depends
+Abstractions for pluggable services. Inversion of control—core depends
 on interfaces, not concrete services. Enables fakes/mocks and future swaps.
+Protocols define what services or components can do,
+without saying how they do it.
 
 Common protocols:
 - LLMClient.chat(messages, settings) -> (reply, meta)
@@ -25,7 +25,7 @@ class LLMClient(Protocol):
         system: Optional[str] = None,
     ) -> tuple[str, dict]: ...
 
-    def image_generate(self, *, prompt: str, size: str = "1024x1024", n: int = 1): ...
+    def image_generate(self, *, prompt: str, size: str = "auto", n: int = 1): ...
 
 
 class PromptFactory(Protocol):

@@ -5,6 +5,7 @@ Uses an LLM client and prompt factory to create prompts and generate images.
 
 from .prompts.factory import DefaultPromptFactory
 from .interfaces import PromptFactory, LLMClient
+from .models import SessionState
 from typing import Optional
 
 
@@ -19,7 +20,13 @@ class RoadmapController:
         self.tokens_out: int = 0
         self.model_used: Optional[str] = None
 
-    def generate_infographic(self, plan: dict, *, size: str = "1024x1024") -> str:
+    def reset(self) -> None:
+        """Clear history, handoffs, cursors, and token counters."""
+        self.state = SessionState()
+        self.tokens_in = self.tokens_out = 0
+        self.model_used = None
+
+    def generate_infographic(self, plan: dict, *, size: str = "auto") -> str:
         """Generates an infographic image from a plan dictionary."""
         prompt = self.prompts.build_infographic_prompt(plan)
         url, meta = self.llm.image_generate(prompt=prompt, size=size, n=1)

@@ -85,11 +85,14 @@ st_session.setdefault(
 )
 st_session.setdefault("job_description", None)
 st_session.setdefault("jd_locked", False)
+st_session.setdefault("jd_parse_meta", {})
+st_session.setdefault("jd_text_input", "")
+st_session.setdefault("jd_upload_key", 0)
+st_session.setdefault("jd_clear_request", False)
 st_session.setdefault("practice_mode", PRACTICE_MODES[0])
 st_session.setdefault("proposed_role", "")
 st_session.setdefault("proposed_seniority", "")
 st_session.setdefault("proposed_seniority_draft", "")
-st_session.setdefault("jd_parse_meta", {})
 st_session.setdefault("session_start_ts", datetime.now().timestamp())
 st_session.setdefault("plan_json", None)
 st_session.setdefault("plan_generated", False)
@@ -176,27 +179,52 @@ def jd_to_dict(jd: object) -> dict:
 
 def reset_session():
     """Wipe all session state except API key and model choice."""
+
     st_session.messages = []
     st_session.tokens_in = 0
     st_session.tokens_out = 0
+    st_session.style = STYLES[0]
+    st_session.temperature = 0.7
+    st_session.top_p = 0.9
     st_session.job_description = None
     st_session.jd_locked = False
+    st_session.jd_parse_meta = {}
+    st_session.jd_text_input = ""
+    st_session.jd_upload_key += 1
     st_session.interviewer_set = False
     st_session.interviewer_role = INTERVIEWER_ROLES[0]
     st_session.persona = PERSONAS[1]
     st_session.interviewer_role_draft = st_session.interviewer_role
     st_session.persona_draft = st_session.persona
+    st_session.practice_mode = PRACTICE_MODES[0]
     st_session.proposed_role = ""
     st_session.proposed_seniority = ""
     st_session.proposed_seniority_draft = ""
     st_session.session_start_ts = datetime.now().timestamp()
+    st_session.last_feedback = {
+        "scores": None,
+        "summary": "",
+        "improved_answer": "",
+        "next_actions": "",
+    }
     st_session.plan_json = None
     st_session.plan_generated = False
     st_session.infographic = None
 
+    st_session.setdefault("speak_replies", False)
+    st_session.setdefault("voice_mode", False)
+    st_session.setdefault("last_voice_sig", None)
+    st_session.setdefault("tts_queue", [])
+    st_session.setdefault("tts_text_queue", [])
+    st_session.setdefault("tts_audio_queue", [])
+
     controller = get_controller()
     if controller:
         controller.reset()
+
+    roadmap_controller = get_roadmap_controller()
+    if roadmap_controller:
+        roadmap_controller.reset()
 
 
 def render_handoff_memo(memo: HandoffMemo) -> None:
@@ -463,6 +491,7 @@ with st.sidebar:
     if jd_mode == "Paste text":
         jd_text = st.text_area(
             "Paste JD text",
+            key="jd_text_input",
             placeholder=(
                 "Paste the full job description here or "
                 + "at least seniority level and role title..."
@@ -472,7 +501,10 @@ with st.sidebar:
         )
     else:
         uploaded_pdf = st.file_uploader(
-            "Upload PDF", type=["pdf"], disabled=disabled_jd
+            "Upload PDF",
+            key=f"jd_uploader_{st_session.jd_upload_key}",
+            type=["pdf"],
+            disabled=disabled_jd,
         )
 
     if not st_session.jd_locked and st.button(
@@ -530,16 +562,19 @@ with st.sidebar:
             )
 
         c1, c2 = st.columns([1, 1])
+
         initial_seniority = bool(st_session.proposed_seniority)
+        has_role = bool(st_session.proposed_role)
         has_seniority = bool(
             st_session.proposed_seniority or st_session.proposed_seniority_draft
         )
+        confirm_disabled = not (has_role and has_seniority)
+        clear_disabled = not (has_role and has_seniority)
+
         confirm_clicked = c1.button(
-            "Confirm",
-            type="primary",
-            disabled=not (st_session.proposed_role and has_seniority),
+            "Confirm", type="primary", disabled=confirm_disabled
         )
-        clear_clicked = c2.button("Clear")
+        clear_clicked = c2.button("Clear", disabled=clear_disabled)
 
         if clear_clicked:
             st_session.proposed_role = ""
@@ -548,6 +583,7 @@ with st.sidebar:
             st_session.job_description = None
             st_session.jd_parse_meta = {}
             st.toast("Cleared. Please provide a job description again.", icon="🧹")
+            st.rerun()
 
         if confirm_clicked:
             if not initial_seniority:
@@ -747,11 +783,11 @@ with practice_tab:
         submitted = False
 
         if st_session.voice_mode:
-            st.markdown("**Press to record, then release**")
+            st.markdown("**Note on voice input:** it does not work on short inputs.")
             wav_bytes = audio_recorder(
                 pause_threshold=2,
                 sample_rate=16_000,
-                text="Hold to talk",
+                text="Press to record",
                 icon_size="2x",
             )
             if wav_bytes:
@@ -924,10 +960,10 @@ with plan_tab:
         "Generate a tailored 7-day prep plan based on the job description if provided. "
         "Scroll down to see detailed plan."
     )
-    if "plan_generated" not in st.session_state:
+    if "plan_generated" not in st_session:
         st_session.plan_generated = False
 
-    if st.button("Generate 7-day plan", disabled=st.session_state.plan_generated):
+    if st.button("Generate 7-day plan", disabled=st_session.plan_generated):
         controller = get_ready_controller()
         if controller:
             jd_map = jd_to_dict(st_session.job_description)

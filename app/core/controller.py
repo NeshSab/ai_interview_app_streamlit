@@ -17,7 +17,7 @@ SecurityGuard. Verify message assembly and error handling.
 """
 
 from __future__ import annotations
-from typing import Optional, Mapping, Any
+from typing import Optional
 
 from .models import (
     PracticeMode,
@@ -106,11 +106,9 @@ class InterviewSessionController:
         data.setdefault("meta", data.get("meta") or {})
         self.state.job = JobDescription(**data)
 
-    def reset(self, *, preserve_job: bool = True) -> None:
-        """Clear history, handoffs, cursors, and token counters. Optionally keep job."""
-        job = self.state.job if preserve_job else None
+    def reset(self) -> None:
+        """Clear history, handoffs, cursors, and token counters."""
         self.state = SessionState()
-        self.state.job = job
         self.tokens_in = self.tokens_out = 0
         self.model_used = None
 
@@ -118,8 +116,8 @@ class InterviewSessionController:
         self,
         *,
         settings: Optional[LLMSettings] = None,
-        persona: "InterviewerPersona" = None,
-        style: "InterviewStyle" = None,
+        persona: InterviewerPersona = None,
+        style: InterviewStyle = None,
         mode: PracticeMode = PracticeMode.BEHAVIORAL,
     ) -> HandoffMemo:
         """
@@ -272,8 +270,8 @@ class InterviewSessionController:
         seniority: str,
         mode: PracticeMode,
         interviewer_role: InterviewerRole,
-        persona: "InterviewerPersona",
-        style: "InterviewStyle",
+        persona: InterviewerPersona,
+        style: InterviewStyle,
     ) -> tuple[dict, dict]:
         """
         Ask the LLM to score the last candidate answer with a 0..1 rubric.
@@ -308,8 +306,8 @@ class InterviewSessionController:
         seniority: str,
         mode: PracticeMode,
         interviewer_role: InterviewerRole,
-        persona: "InterviewerPersona",
-        style: "InterviewStyle",
+        persona: InterviewerPersona,
+        style: InterviewStyle,
         rescore: bool = False,
     ) -> tuple[dict, dict]:
         """
