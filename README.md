@@ -1,7 +1,7 @@
 # Interview Prep App
 
 A Streamlit-based app to practice job interviews with an AI interviewer. Paste or upload a Job Description, chat through mock questions, get feedback and interview preparation plan, and see live token/cost estimates.
-- Streamlit app link: [ADD LINK](https://neshsab-ai-interview-app-streamlit-appapp-pyg4sc.streamlit.app/)
+- Streamlit app link: https://neshsab-ai-interview-app-streamlit-appapp-pyg4sc.streamlit.app/
 	- To use an app, you need OpenAI API key.
 <br>
 
