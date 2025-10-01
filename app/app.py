@@ -338,7 +338,7 @@ def start_interview():
         return
 
 
-def _extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
+def extract_last_qa_old(history: list[dict[str, str]]) -> tuple[str, str]:
     """
     Return (last_question_from_assistant, last_user_answer) from the history.
     If not present, returns ("", "").
@@ -365,7 +365,28 @@ def _extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
     return last_assistant, last_user
 
 
-def _render_rubric(scores: dict[str, float] | None):
+def extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
+    """
+    Return (previous_assistant_question, last_user_answer) from the history.
+    If not present, returns ("", "").
+    """
+    last_user = ""
+    prev_assistant = ""
+
+    for idx in range(len(history) - 1, -1, -1):
+        m = history[idx]
+        if m.get("role") == "user":
+            last_user = (m.get("content") or "").strip()
+            for j in range(idx - 1, -1, -1):
+                if history[j].get("role") == "assistant":
+                    prev_assistant = (history[j].get("content") or "").strip()
+                    break
+            break
+
+    return prev_assistant, last_user
+
+
+def render_rubric(scores: dict[str, float] | None):
     """Render the 4-part rubric with scores and progress bars."""
     if not scores:
         scores = {
@@ -404,7 +425,7 @@ def reset_feedback_ui():
     }
 
 
-def _format_duration(seconds: float) -> str:
+def format_duration(seconds: float) -> str:
     """Format seconds as Hh Mm Ss, skipping hours if zero."""
     seconds = int(max(0, seconds))
     h = seconds // 3600
@@ -424,7 +445,7 @@ def show_infographic(img_payload):
         if not data:
             st.error("Image URL is empty.")
             return
-        st.image(data, use_container_width=True)
+        st.image(data, width=600)
         return
 
     if kind == "bytes":
@@ -432,7 +453,7 @@ def show_infographic(img_payload):
             st.error("Image bytes are empty.")
             return
         fmt = img_payload.get("format", "PNG")
-        st.image(data, use_container_width=True, output_format=fmt)
+        st.image(data, output_format=fmt, width=600)
         return
 
     st.error("No image received from generator.")
@@ -839,7 +860,7 @@ with feedback_tab:
         "Score your latest answer, preview an improved version, and get next actions."
     )
     history = current_history()
-    last_q, last_a = _extract_last_qa(history)
+    last_q, last_a = extract_last_qa(history)
 
     qcol, acol = st.columns([1, 1])
     with qcol:
@@ -913,7 +934,7 @@ with feedback_tab:
             st.toast(str(e))
 
     st.markdown("#### Rubric")
-    _render_rubric(st_session.last_feedback.get("scores"))
+    render_rubric(st_session.last_feedback.get("scores"))
 
     if (st_session.last_feedback.get("summary") or "").strip():
         st.caption(st_session.last_feedback["summary"])
@@ -947,6 +968,10 @@ with feedback_tab:
     if controller and controller.state.handoffs:
         st.divider()
         st.subheader("Handoff history")
+        st.caption(
+            "Previous interviewers' memos used by the current interviewer. "
+            "These are generated when you change the interviewer."
+        )
         for i, m in enumerate(reversed(controller.state.handoffs), 1):
             with st.expander(
                 f"Memo #{i} — {getattr(m.interviewer_role, 'value', m.interviewer_role)}"
@@ -958,7 +983,7 @@ with plan_tab:
     st.subheader("Interview Prep Plan")
     st.caption(
         "Generate a tailored 7-day prep plan based on the job description if provided. "
-        "Scroll down to see detailed plan."
+        "Scroll down to see a roadmap."
     )
     if "plan_generated" not in st_session:
         st_session.plan_generated = False
@@ -986,10 +1011,6 @@ with plan_tab:
             st_session.infographic = img_payload
             st.rerun()
 
-    if st_session.get("infographic"):
-        st.divider()
-        show_infographic(st_session.infographic)
-
     if st_session.get("plan_json"):
         st.divider()
         plan = st_session["plan_json"]
@@ -1013,6 +1034,9 @@ with plan_tab:
                     for x in d["deliverables"]:
                         st.markdown(f"- {x}")
 
+    if st_session.get("infographic"):
+        st.divider()
+        show_infographic(st_session.infographic)
 
 with pricing_tab:
     st.subheader("Insights & Cost")
@@ -1047,7 +1071,10 @@ with pricing_tab:
 
     c4, _, _ = st.columns([1, 1, 1])
     with c4:
-        st.metric("Session time", _format_duration(session_secs))
+        st.metric("Session time", format_duration(session_secs))
+
+    if st_session.get("infographic"):
+        st.caption("Note: Roadmap generation costs are not included in this estimate.")
 
 st.divider()
 st.caption(

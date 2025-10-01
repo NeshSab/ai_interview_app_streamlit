@@ -74,29 +74,25 @@ def _to_str_list(x: Any) -> list[str]:
     return []
 
 
-def extract_last_qa(history: list[Message]) -> tuple[str, str]:
+def _extract_last_qa(history: list[dict[str, str]]) -> tuple[str, str]:
     """
-    Return (last_question_from_assistant, last_user_answer) or ("","")
-    if unavailable.
+    Return (previous_assistant_question, last_user_answer) from the history.
+    If not present, returns ("", "").
     """
     last_user = ""
-    last_assistant = ""
-    for m in reversed(history or []):
-        role = m.get("role")
-        if not last_user and role == "user":
+    prev_assistant = ""
+
+    for idx in range(len(history) - 1, -1, -1):
+        m = history[idx]
+        if m.get("role") == "user":
             last_user = (m.get("content") or "").strip()
-        elif not last_assistant and role == "assistant":
-            last_assistant = (m.get("content") or "").strip()
-        if last_user and last_assistant:
-            break
-    if last_assistant and "?" not in last_assistant:
-        for m in reversed(history or []):
-            if m.get("role") == "assistant":
-                txt = (m.get("content") or "").strip()
-                if "?" in txt:
-                    last_assistant = txt
+            for j in range(idx - 1, -1, -1):
+                if history[j].get("role") == "assistant":
+                    prev_assistant = (history[j].get("content") or "").strip()
                     break
-    return last_assistant, last_user
+            break
+
+    return prev_assistant, last_user
 
 
 def generate_handoff_llm(
@@ -186,7 +182,7 @@ def score_last_answer_llm(
     memos: list,
 ) -> tuple[dict, dict]:
     """Return (score_dict, meta) for the last Q/A in history."""
-    q, a = extract_last_qa(history)
+    q, a = _extract_last_qa(history)
     if not a:
         raise ValueError("No candidate answer found to score.")
 
@@ -251,7 +247,7 @@ def improve_last_answer_llm(
     rescore: bool = False,
 ) -> tuple[dict, dict]:
     """Return (improvement_dict, meta) for the last Q/A in history."""
-    q, a = extract_last_qa(history)
+    q, a = _extract_last_qa(history)
     if not a:
         raise ValueError("No candidate answer found to improve.")
 
