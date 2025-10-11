@@ -36,6 +36,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 # ---------------------------
 # UI constants
 # ---------------------------
@@ -459,22 +460,21 @@ def show_infographic(img_payload):
     st.error("No image received from generator.")
 
 
+if not st_session.api_key_set:
+    st.error("Enter your OpenAI API key in the sidebar to enable all features.")
+
 # ---------------------------
 # SIDEBAR: settings & JD ingest
 # ---------------------------
 with st.sidebar:
     st.markdown("# Settings")
 
-    st.markdown("## OPEN AI API Key Required")
     user_api_key = st.sidebar.text_input(
-        "Enter your API key",
+        "OpenAI API key (required)",
         type="password",
         help="We do not store your key. It stays in your session only.",
     )
-    if not user_api_key:
-        st.warning("Please enter your API key in the sidebar to continue.")
-        st.stop()
-    else:
+    if user_api_key:
         if not st_session.api_key_set:
             try:
                 llm = OpenAILLMClient(api_key=user_api_key)
@@ -686,9 +686,9 @@ with st.sidebar:
         horizontal=True,
     )
     st_session.temperature = st.slider(
-        "Temperature", 0.0, 1.0, st_session.temperature, 0.05
+        "Creativity", 0.0, 1.0, st_session.temperature, 0.05
     )
-    st_session.top_p = st.slider("Top-p", 0.0, 1.0, st_session.top_p, 0.05)
+    st_session.top_p = st.slider("Response Diversity", 0.0, 1.0, st_session.top_p, 0.05)
     st.markdown("## Session Controls")
     st.write("Reset all session data and start fresh.")
     st.button("Reset session", type="primary", on_click=reset_session)
