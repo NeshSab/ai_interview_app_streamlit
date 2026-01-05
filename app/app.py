@@ -688,7 +688,7 @@ with st.sidebar:
     st_session.temperature = st.slider(
         "Creativity", 0.0, 1.0, st_session.temperature, 0.05
     )
-    st_session.top_p = st.slider("Response Diversity", 0.0, 1.0, st_session.top_p, 0.05)
+    st_session.top_p = st.slider("Response diversity", 0.0, 1.0, st_session.top_p, 0.05)
     st.markdown("## Session Controls")
     st.write("Reset all session data and start fresh.")
     st.button("Reset session", type="primary", on_click=reset_session)
@@ -735,7 +735,7 @@ with about_tab:
         What to expect:
 
         - Practice answering behavioral, technical, and situational interview questions with an AI interviewer. 
-        - Customize your session by selecting the interviewer’s role, persona, and interview style.
+        - Customize your session by selecting the interviewer's role, persona, and interview style.
         - Upload a job description (PDF or text) or simply specify your target role and seniority level.
         - Receive a tailored 7-day preparation plan based on your chosen role and requirements.
         - Get instant feedback on your answers, including scoring, improvement suggestions, and next steps.

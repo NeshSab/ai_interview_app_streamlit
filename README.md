@@ -7,7 +7,6 @@ A Streamlit-based app to practice job interviews with an AI interviewer. Paste o
 
 ## Table of Contents
 - [Introduction](#introduction)
-- [How to Navigate](#how-to-navigate-this-repository)
 - [Features](#features)
 - [How to Run](#how-to-run)
 - [Project Structure](#project-structure)
@@ -18,13 +17,6 @@ A Streamlit-based app to practice job interviews with an AI interviewer. Paste o
 
 ## Introduction
 This app helps users prepare for job interviews by simulating realistic interview scenarios with an AI interviewer. Users can upload or paste a job description, select the interviewer’s role and persona, as well as questions types, and receive tailored questions, feedback, and a preparation plan. The app is designed for privacy and flexibility, supporting various seniority levels and interview styles.
-<br>
-
-
-## How to Navigate This Repository
-- `app/`: Main Streamlit UI and dependencies;
-- `jailbreak_experiments/`: Recorded jailbreak experiments in csv file and script to automatically run multiple experiments.
-- `generated_roadmaps/`: Few examples of generated images adherent to set requirements.
 <br>
 
 
