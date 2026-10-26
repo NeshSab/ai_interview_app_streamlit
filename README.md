@@ -6,7 +6,7 @@ A Streamlit-based app to practice job interviews with an AI interviewer. Paste o
 <br>
 
 ## Table of Contents
-- [Introduction](#introduction)
+- [Introduction](#introduction)RE
 - [Features](#features)
 - [How to Run](#how-to-run)
 - [Project Structure](#project-structure)
